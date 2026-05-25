@@ -18,10 +18,11 @@ Firmware for an M5Stack Atom Lite, Atomic PoE Base, and M5Stack DMX Unit. The de
 | W5500 CS | 19 |
 | DMX TX | 26 |
 | DMX RX | 32 |
+| Atom Lite button | 39 |
 
 ## Network Behavior
 
-The firmware requests an Ethernet address through DHCP on the W5500 interface during startup. WiFi station mode is used as the next network path when WiFi credentials are stored. The setup access point starts after Ethernet and WiFi station startup enter setup mode.
+The Ethernet interface uses DHCP or a stored static IPv4 configuration. WiFi station mode is used as the next network path after Ethernet startup completes and stored WiFi credentials exist. The Atom Lite front button starts the setup access point during startup or runtime.
 
 The setup access point uses the configured hostname as its SSID and serves the captive portal at `http://192.168.4.1/`.
 
@@ -55,6 +56,8 @@ Settings are stored in `/config.json` on LittleFS:
 
 - Hostname
 - WiFi SSID and password
+- WiFi SSID scan results from the active radio environment
+- Ethernet DHCP or static IPv4 configuration
 - Art-Net short name and long name
 - Art-Net Net, Subnet, and Universe
 - DMX start address

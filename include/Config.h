@@ -7,6 +7,11 @@ struct AppConfig {
   char hostname[33];
   char wifiSsid[33];
   char wifiPassword[65];
+  bool ethernetDhcp;
+  char ethernetIp[16];
+  char ethernetSubnet[16];
+  char ethernetGateway[16];
+  char ethernetDns[16];
   char shortName[18];
   char longName[64];
   uint8_t artnetNet;

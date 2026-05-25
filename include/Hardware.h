@@ -12,6 +12,9 @@ static constexpr uint8_t ETH_CS_PIN = 19;
 static constexpr uint8_t DMX_TX_PIN = 26;
 static constexpr uint8_t DMX_RX_PIN = 32;
 
+// Atom Lite front button.
+static constexpr uint8_t SETUP_BUTTON_PIN = 39;
+
 static constexpr uint16_t HTTP_PORT = 80;
 static constexpr uint16_t ARTNET_PORT = 6454;
 static constexpr uint16_t MDNS_PORT = 5353;

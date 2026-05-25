@@ -30,6 +30,8 @@ constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 12000;
 constexpr uint32_t DMX_OUTPUT_INTERVAL_MS = 25;
 constexpr uint32_t DMX_INPUT_MIN_INTERVAL_MS = 20;
 constexpr uint32_t STATUS_PRINT_INTERVAL_MS = 10000;
+constexpr uint32_t SETUP_BUTTON_HOLD_MS = 1200;
+constexpr uint32_t WIFI_SCAN_MAX_MS_PER_CHANNEL = 120;
 constexpr uint8_t ARTNET_PROTOCOL_VERSION_HI = 0;
 constexpr uint8_t ARTNET_PROTOCOL_VERSION_LO = 14;
 constexpr uint16_t ARTNET_OP_POLL = 0x2000;
@@ -66,7 +68,10 @@ uint32_t rebootAtMs = 0;
 uint32_t lastDmxOutputMs = 0;
 uint32_t lastDmxInputMs = 0;
 uint32_t lastStatusPrintMs = 0;
+uint32_t setupButtonPressedAtMs = 0;
 bool dmxInstalled = false;
+bool setupButtonWasPressed = false;
+bool setupButtonHandledForPress = false;
 
 struct RuntimeState {
   bool ethernetOnline = false;
@@ -111,7 +116,7 @@ button{height:38px;border:1px solid var(--line);border-radius:6px;background:var
 button.primary{border-color:var(--accent);background:var(--accent);color:white}button.good{border-color:var(--accent2);background:var(--accent2);color:white}
 button.danger{border-color:var(--danger);color:var(--danger)}.status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .metric{border:1px solid var(--line);border-radius:8px;padding:10px;min-height:64px}.metric b{display:block;font-size:18px}.metric span{color:var(--muted)}
-.message{min-height:22px;color:var(--muted)}.message.error{color:var(--danger)}.hidden{display:none}
+.combo{display:flex;gap:8px}.combo input{min-width:0}.combo button{flex:0 0 auto}.message{min-height:22px;color:var(--muted)}.message.error{color:var(--danger)}.hidden{display:none}
 @media (max-width:760px){header{align-items:flex-start;flex-direction:column}.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr;gap:6px}.status{grid-template-columns:1fr}}
 </style>
 </head>
@@ -126,8 +131,16 @@ button.danger{border-color:var(--danger);color:var(--danger)}.status{display:gri
 <section class="panel">
 <h2>Device</h2>
 <div class="row"><label for="hostname">Hostname</label><input id="hostname" maxlength="32"></div>
-<div class="row"><label for="wifiSsid">WiFi SSID</label><input id="wifiSsid" maxlength="32" autocomplete="off"></div>
+<div class="row"><label for="wifiSsid">WiFi SSID</label><div class="combo"><input id="wifiSsid" maxlength="32" autocomplete="off" list="wifiNetworks"><button type="button" id="scanWifi">Scan</button></div><datalist id="wifiNetworks"></datalist></div>
 <div class="row"><label for="wifiPassword">WiFi password</label><input id="wifiPassword" maxlength="64" type="password" autocomplete="new-password"></div>
+</section>
+<section class="panel">
+<h2>Ethernet</h2>
+<div class="row"><label for="ethernetMode">Mode</label><select id="ethernetMode"><option value="dhcp">DHCP</option><option value="static">Static</option></select></div>
+<div class="row"><label for="ethernetIp">IP address</label><input id="ethernetIp" inputmode="numeric" pattern="[0-9.]*"></div>
+<div class="row"><label for="ethernetSubnet">Subnet mask</label><input id="ethernetSubnet" inputmode="numeric" pattern="[0-9.]*"></div>
+<div class="row"><label for="ethernetGateway">Gateway</label><input id="ethernetGateway" inputmode="numeric" pattern="[0-9.]*"></div>
+<div class="row"><label for="ethernetDns">DNS server</label><input id="ethernetDns" inputmode="numeric" pattern="[0-9.]*"></div>
 </section>
 <section class="panel">
 <h2>Art-Net</h2>
@@ -153,18 +166,23 @@ button.danger{border-color:var(--danger);color:var(--danger)}.status{display:gri
 <input class="hidden" type="file" id="restoreFile" accept="application/json,.json">
 </main>
 <script>
-const ids=["hostname","wifiSsid","wifiPassword","shortName","longName","artnetNet","artnetSubnet","artnetUniverse","dmxStartAddress","artnetTargetIp"];
+const ids=["hostname","wifiSsid","wifiPassword","ethernetIp","ethernetSubnet","ethernetGateway","ethernetDns","shortName","longName","artnetNet","artnetSubnet","artnetUniverse","dmxStartAddress","artnetTargetIp"];
 const msg=document.getElementById("message");
 function setMsg(t,e=false){msg.textContent=t;msg.className=e?"message error":"message"}
 async function api(path,opt={}){const r=await fetch(path,opt);const text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch(e){data={raw:text}}if(!r.ok)throw new Error(data.error||r.statusText);return data}
-function fill(c){ids.forEach(id=>{document.getElementById(id).value=c[id]??""});document.getElementById("dmxMode").value=c.dmxInputEnabled?"input":"output";document.getElementById("artnetUnicast").value=c.artnetUnicast?"true":"false"}
-function collect(){const c={};ids.forEach(id=>{const el=document.getElementById(id);c[id]=el.type==="number"?Number(el.value):el.value});c.dmxInputEnabled=document.getElementById("dmxMode").value==="input";c.artnetUnicast=document.getElementById("artnetUnicast").value==="true";return c}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
+function ethernetFields(){return["ethernetIp","ethernetSubnet","ethernetGateway","ethernetDns"]}
+function updateEthernetFields(){const dhcp=document.getElementById("ethernetMode").value==="dhcp";ethernetFields().forEach(id=>document.getElementById(id).disabled=dhcp)}
+function fill(c){ids.forEach(id=>{document.getElementById(id).value=c[id]??""});document.getElementById("ethernetMode").value=c.ethernetDhcp?"dhcp":"static";document.getElementById("dmxMode").value=c.dmxInputEnabled?"input":"output";document.getElementById("artnetUnicast").value=c.artnetUnicast?"true":"false";updateEthernetFields()}
+function collect(){const c={};ids.forEach(id=>{const el=document.getElementById(id);c[id]=el.type==="number"?Number(el.value):el.value});c.ethernetDhcp=document.getElementById("ethernetMode").value==="dhcp";c.dmxInputEnabled=document.getElementById("dmxMode").value==="input";c.artnetUnicast=document.getElementById("artnetUnicast").value==="true";return c}
 async function load(){fill(await api("/api/config"));await status()}
 async function status(){const s=await api("/api/status");document.getElementById("status").innerHTML=[
-["Ethernet",s.network.ethernetIp||"setup"],["WiFi",s.network.wifiIp||s.network.apIp||"setup"],["mDNS",s.hostname+".local"],
+["Ethernet",s.network.ethernetIp||s.network.ethernetMode],["WiFi",s.network.wifiIp||s.network.apIp||"setup"],["mDNS",s.hostname+".local"],
 ["ArtDmx RX",s.counters.artDmxReceived],["ArtDmx TX",s.counters.artDmxSent],["DMX",s.mode]
 ].map(x=>`<div class="metric"><b>${x[1]}</b><span>${x[0]}</span></div>`).join("")}
-document.getElementById("settings").addEventListener("submit",async e=>{e.preventDefault();try{await api("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(collect())});setMsg("Settings saved");await status()}catch(err){setMsg(err.message,true)}})
+document.getElementById("settings").addEventListener("submit",async e=>{e.preventDefault();try{const r=await api("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(collect())});setMsg(r.restartRecommended?"Settings saved; reboot applies network changes":"Settings saved");await status()}catch(err){setMsg(err.message,true)}})
+document.getElementById("ethernetMode").onchange=updateEthernetFields
+document.getElementById("scanWifi").onclick=async()=>{try{setMsg("Scanning WiFi");const data=await api("/api/wifi/scan");const list=document.getElementById("wifiNetworks");list.innerHTML=data.networks.map(n=>`<option value="${esc(n.ssid)}">${n.rssi} dBm, channel ${n.channel}</option>`).join("");setMsg(`Found ${data.networks.length} WiFi networks`)}catch(err){setMsg(err.message,true)}}
 document.getElementById("backup").onclick=()=>{location.href="/api/backup"}
 document.getElementById("restoreBtn").onclick=()=>document.getElementById("restoreFile").click()
 document.getElementById("restoreFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{await api("/api/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:await f.text()});setMsg("Backup restored");await load()}catch(err){setMsg(err.message,true)}}
@@ -219,6 +237,20 @@ IPAddress primaryBroadcastIp() {
   return IPAddress(255, 255, 255, 255);
 }
 
+bool isSetupButtonPressed() {
+  return digitalRead(SETUP_BUTTON_PIN) == LOW;
+}
+
+bool ethernetLinkUsable() {
+  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+    return false;
+  }
+  if (Ethernet.localIP() == IPAddress(0, 0, 0, 0)) {
+    return false;
+  }
+  return Ethernet.linkStatus() != LinkOFF;
+}
+
 String ipToString(IPAddress ip) {
   if (ip == IPAddress(0, 0, 0, 0)) {
     return "";
@@ -241,21 +273,50 @@ void beginDmx() {
   dmxInstalled = true;
 }
 
+void startEthernetServices() {
+  ethernetHttpServer.begin();
+  runtime.ethernetArtNetStarted = ethernetArtNetUdp.begin(ARTNET_PORT) == 1;
+  runtime.ethernetMdnsStarted = ethernetMdnsUdp.beginMulticast(MDNS_MULTICAST, MDNS_PORT) == 1;
+}
+
+void startWiFiServices() {
+  wifiHttpServer.begin();
+  if (!runtime.wifiArtNetStarted) {
+    runtime.wifiArtNetStarted = wifiArtNetUdp.begin(ARTNET_PORT) == 1;
+  }
+  if (!runtime.wifiMdnsStarted) {
+    runtime.wifiMdnsStarted = wifiMdnsUdp.beginMulticast(MDNS_MULTICAST, MDNS_PORT) == 1;
+  }
+}
+
 void beginEthernet() {
   SPI.begin(ETH_SCK_PIN, ETH_MISO_PIN, ETH_MOSI_PIN, ETH_CS_PIN);
   Ethernet.init(ETH_CS_PIN);
   Ethernet.setHostname(config.hostname);
-  Serial.println("Starting W5500 Ethernet DHCP");
-  int dhcpResult = Ethernet.begin(ethernetMac, ETHERNET_DHCP_TIMEOUT_MS);
-  runtime.ethernetOnline = dhcpResult == 1 && Ethernet.localIP() != IPAddress(0, 0, 0, 0);
+  if (config.ethernetDhcp) {
+    Serial.println("Starting W5500 Ethernet DHCP");
+    int dhcpResult = Ethernet.begin(ethernetMac, ETHERNET_DHCP_TIMEOUT_MS);
+    runtime.ethernetOnline = dhcpResult == 1 && ethernetLinkUsable();
+  } else {
+    IPAddress ip;
+    IPAddress dns;
+    IPAddress gateway;
+    IPAddress subnet;
+    parseConfiguredIp(config.ethernetIp, ip);
+    parseConfiguredIp(config.ethernetDns, dns);
+    parseConfiguredIp(config.ethernetGateway, gateway);
+    parseConfiguredIp(config.ethernetSubnet, subnet);
+    Serial.println("Starting W5500 Ethernet static IPv4");
+    Ethernet.begin(ethernetMac, ip, dns, gateway, subnet);
+    delay(250);
+    runtime.ethernetOnline = ethernetLinkUsable();
+  }
   if (runtime.ethernetOnline) {
-    ethernetHttpServer.begin();
-    runtime.ethernetArtNetStarted = ethernetArtNetUdp.begin(ARTNET_PORT) == 1;
-    runtime.ethernetMdnsStarted = ethernetMdnsUdp.beginMulticast(MDNS_MULTICAST, MDNS_PORT) == 1;
+    startEthernetServices();
     Serial.print("Ethernet IP: ");
     Serial.println(Ethernet.localIP());
   } else {
-    Serial.println("Ethernet DHCP did not produce an address");
+    Serial.println("Ethernet setup produced no active link");
   }
 }
 
@@ -278,34 +339,33 @@ void beginWiFiStation() {
 
   runtime.wifiStationOnline = WiFi.status() == WL_CONNECTED;
   if (runtime.wifiStationOnline) {
-    wifiHttpServer.begin();
-    runtime.wifiArtNetStarted = wifiArtNetUdp.begin(ARTNET_PORT) == 1;
-    runtime.wifiMdnsStarted = wifiMdnsUdp.beginMulticast(MDNS_MULTICAST, MDNS_PORT) == 1;
+    startWiFiServices();
     Serial.print("WiFi IP: ");
     Serial.println(WiFi.localIP());
   }
 }
 
 void beginAccessPoint() {
+  if (runtime.wifiApOnline) {
+    return;
+  }
   WiFi.persistent(false);
-  WiFi.mode(WIFI_AP);
+  WiFi.mode(runtime.wifiStationOnline ? WIFI_AP_STA : WIFI_AP);
   WiFi.softAPConfig(FALLBACK_AP_IP, FALLBACK_AP_IP, IPAddress(255, 255, 255, 0));
   WiFi.softAP(config.hostname);
   runtime.wifiApOnline = true;
-  wifiHttpServer.begin();
-  runtime.wifiArtNetStarted = wifiArtNetUdp.begin(ARTNET_PORT) == 1;
-  runtime.wifiMdnsStarted = wifiMdnsUdp.beginMulticast(MDNS_MULTICAST, MDNS_PORT) == 1;
+  startWiFiServices();
   dnsServer.start(53, "*", WiFi.softAPIP());
   Serial.print("Setup AP IP: ");
   Serial.println(WiFi.softAPIP());
 }
 
-void beginNetwork() {
+void beginNetwork(bool setupPortalRequested) {
   beginEthernet();
   if (!runtime.ethernetOnline) {
     beginWiFiStation();
   }
-  if (!runtime.ethernetOnline && !runtime.wifiStationOnline) {
+  if (setupPortalRequested) {
     beginAccessPoint();
   }
 }
@@ -317,6 +377,23 @@ void maintainNetwork() {
   if (runtime.wifiApOnline) {
     dnsServer.processNextRequest();
   }
+}
+
+void handleSetupButton() {
+  bool pressed = isSetupButtonPressed();
+  uint32_t now = millis();
+  if (pressed && !setupButtonWasPressed) {
+    setupButtonPressedAtMs = now;
+    setupButtonHandledForPress = false;
+  }
+  if (pressed && !setupButtonHandledForPress && now - setupButtonPressedAtMs >= SETUP_BUTTON_HOLD_MS) {
+    beginAccessPoint();
+    setupButtonHandledForPress = true;
+  }
+  if (!pressed) {
+    setupButtonHandledForPress = false;
+  }
+  setupButtonWasPressed = pressed;
 }
 
 bool readHttpRequest(Client &client, HttpRequest &request) {
@@ -397,8 +474,11 @@ String buildStatusJson() {
   doc["artnetPortAddress"] = artnetPortAddress(config);
   JsonObject network = doc["network"].to<JsonObject>();
   network["ethernetIp"] = runtime.ethernetOnline ? Ethernet.localIP().toString() : "";
+  network["ethernetMode"] = config.ethernetDhcp ? "DHCP" : "Static";
+  network["ethernetLink"] = runtime.ethernetOnline ? "up" : "setup";
   network["wifiIp"] = runtime.wifiStationOnline ? WiFi.localIP().toString() : "";
   network["apIp"] = runtime.wifiApOnline ? WiFi.softAPIP().toString() : "";
+  network["setupPortal"] = runtime.wifiApOnline;
   network["primaryIp"] = primaryIp().toString();
   JsonObject counters = doc["counters"].to<JsonObject>();
   counters["artDmxReceived"] = runtime.artDmxReceived;
@@ -407,6 +487,58 @@ String buildStatusJson() {
   counters["dmxFramesIn"] = runtime.dmxFramesIn;
   counters["dmxFramesOut"] = runtime.dmxFramesOut;
   counters["configSaves"] = runtime.configSaves;
+  String body;
+  serializeJson(doc, body);
+  return body;
+}
+
+String encryptionTypeName(wifi_auth_mode_t authMode) {
+  switch (authMode) {
+    case WIFI_AUTH_OPEN:
+      return "open";
+    case WIFI_AUTH_WEP:
+      return "WEP";
+    case WIFI_AUTH_WPA_PSK:
+      return "WPA";
+    case WIFI_AUTH_WPA2_PSK:
+      return "WPA2";
+    case WIFI_AUTH_WPA_WPA2_PSK:
+      return "WPA/WPA2";
+    case WIFI_AUTH_WPA2_ENTERPRISE:
+      return "WPA2 Enterprise";
+    default:
+      return "secured";
+  }
+}
+
+String buildWifiScanJson() {
+  wifi_mode_t previousMode = WiFi.getMode();
+  bool restoreOff = previousMode == WIFI_OFF;
+  if (previousMode == WIFI_OFF) {
+    WiFi.mode(WIFI_STA);
+  } else if (previousMode == WIFI_AP) {
+    WiFi.mode(WIFI_AP_STA);
+  }
+
+  int16_t count = WiFi.scanNetworks(false, true, false, WIFI_SCAN_MAX_MS_PER_CHANNEL);
+  JsonDocument doc;
+  JsonArray networks = doc["networks"].to<JsonArray>();
+  if (count > 0) {
+    for (int16_t i = 0; i < count; ++i) {
+      JsonObject item = networks.add<JsonObject>();
+      item["ssid"] = WiFi.SSID(i);
+      item["rssi"] = WiFi.RSSI(i);
+      item["channel"] = WiFi.channel(i);
+      item["encryption"] = encryptionTypeName(static_cast<wifi_auth_mode_t>(WiFi.encryptionType(i)));
+    }
+  }
+  doc["count"] = networks.size();
+  WiFi.scanDelete();
+
+  if (restoreOff && !runtime.wifiStationOnline && !runtime.wifiApOnline) {
+    WiFi.mode(WIFI_OFF);
+  }
+
   String body;
   serializeJson(doc, body);
   return body;
@@ -453,6 +585,8 @@ void handleHttp(Client &client) {
     handleConfigPost(client, request.body);
   } else if (request.method == "GET" && request.path == "/api/status") {
     sendHttpResponse(client, 200, "OK", "application/json", buildStatusJson());
+  } else if (request.method == "GET" && request.path == "/api/wifi/scan") {
+    sendHttpResponse(client, 200, "OK", "application/json", buildWifiScanJson());
   } else if (request.method == "GET" && request.path == "/api/backup") {
     String body;
     configToJson(config, body);
@@ -840,6 +974,7 @@ void setup() {
   Serial.println();
   Serial.println("M5AtomPoeArtNet2DMX starting");
 
+  pinMode(SETUP_BUTTON_PIN, INPUT);
   copyMacFromChip();
   if (!LittleFS.begin(true)) {
     Serial.println("LittleFS mount failed");
@@ -850,10 +985,11 @@ void setup() {
   }
 
   beginDmx();
-  beginNetwork();
+  beginNetwork(isSetupButtonPressed());
 }
 
 void loop() {
+  handleSetupButton();
   maintainNetwork();
 
   if (runtime.ethernetOnline) {

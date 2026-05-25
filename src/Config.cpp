@@ -65,6 +65,11 @@ void writeConfigDocument(const AppConfig &config, JsonDocument &doc) {
   doc["hostname"] = config.hostname;
   doc["wifiSsid"] = config.wifiSsid;
   doc["wifiPassword"] = config.wifiPassword;
+  doc["ethernetDhcp"] = config.ethernetDhcp;
+  doc["ethernetIp"] = config.ethernetIp;
+  doc["ethernetSubnet"] = config.ethernetSubnet;
+  doc["ethernetGateway"] = config.ethernetGateway;
+  doc["ethernetDns"] = config.ethernetDns;
   doc["shortName"] = config.shortName;
   doc["longName"] = config.longName;
   doc["artnetNet"] = config.artnetNet;
@@ -86,6 +91,21 @@ void applyDocument(AppConfig &config, JsonDocument &doc) {
   }
   if (doc["wifiPassword"].is<const char *>()) {
     copyText(config.wifiPassword, sizeof(config.wifiPassword), doc["wifiPassword"].as<const char *>());
+  }
+  if (doc["ethernetDhcp"].is<bool>()) {
+    config.ethernetDhcp = doc["ethernetDhcp"].as<bool>();
+  }
+  if (doc["ethernetIp"].is<const char *>()) {
+    copyText(config.ethernetIp, sizeof(config.ethernetIp), doc["ethernetIp"].as<const char *>());
+  }
+  if (doc["ethernetSubnet"].is<const char *>()) {
+    copyText(config.ethernetSubnet, sizeof(config.ethernetSubnet), doc["ethernetSubnet"].as<const char *>());
+  }
+  if (doc["ethernetGateway"].is<const char *>()) {
+    copyText(config.ethernetGateway, sizeof(config.ethernetGateway), doc["ethernetGateway"].as<const char *>());
+  }
+  if (doc["ethernetDns"].is<const char *>()) {
+    copyText(config.ethernetDns, sizeof(config.ethernetDns), doc["ethernetDns"].as<const char *>());
   }
   if (doc["shortName"].is<const char *>()) {
     copyText(config.shortName, sizeof(config.shortName), doc["shortName"].as<const char *>());
@@ -121,6 +141,11 @@ void applyDefaultConfig(AppConfig &config) {
   copyText(config.hostname, sizeof(config.hostname), "m5atompoe-artnet2dmx");
   copyText(config.wifiSsid, sizeof(config.wifiSsid), "");
   copyText(config.wifiPassword, sizeof(config.wifiPassword), "");
+  config.ethernetDhcp = true;
+  copyText(config.ethernetIp, sizeof(config.ethernetIp), "192.168.1.50");
+  copyText(config.ethernetSubnet, sizeof(config.ethernetSubnet), "255.255.255.0");
+  copyText(config.ethernetGateway, sizeof(config.ethernetGateway), "192.168.1.1");
+  copyText(config.ethernetDns, sizeof(config.ethernetDns), "192.168.1.1");
   copyText(config.shortName, sizeof(config.shortName), "M5 Atom DMX");
   copyText(config.longName, sizeof(config.longName), "M5AtomPoeArtNet2DMX");
   config.artnetNet = 0;
@@ -154,6 +179,18 @@ bool loadConfig(AppConfig &config) {
   IPAddress ip;
   if (!parseConfiguredIp(config.artnetTargetIp, ip)) {
     copyText(config.artnetTargetIp, sizeof(config.artnetTargetIp), "2.0.0.1");
+  }
+  if (!parseConfiguredIp(config.ethernetIp, ip)) {
+    copyText(config.ethernetIp, sizeof(config.ethernetIp), "192.168.1.50");
+  }
+  if (!parseConfiguredIp(config.ethernetSubnet, ip)) {
+    copyText(config.ethernetSubnet, sizeof(config.ethernetSubnet), "255.255.255.0");
+  }
+  if (!parseConfiguredIp(config.ethernetGateway, ip)) {
+    copyText(config.ethernetGateway, sizeof(config.ethernetGateway), "192.168.1.1");
+  }
+  if (!parseConfiguredIp(config.ethernetDns, ip)) {
+    copyText(config.ethernetDns, sizeof(config.ethernetDns), "192.168.1.1");
   }
   return true;
 }
@@ -193,6 +230,24 @@ bool updateConfigFromJson(AppConfig &config, const String &json, String &error) 
   if (!parseConfiguredIp(next.artnetTargetIp, target)) {
     error = "artnetTargetIp must contain an IPv4 address";
     return false;
+  }
+  if (!next.ethernetDhcp) {
+    if (!parseConfiguredIp(next.ethernetIp, target)) {
+      error = "ethernetIp must contain an IPv4 address";
+      return false;
+    }
+    if (!parseConfiguredIp(next.ethernetSubnet, target)) {
+      error = "ethernetSubnet must contain an IPv4 address";
+      return false;
+    }
+    if (!parseConfiguredIp(next.ethernetGateway, target)) {
+      error = "ethernetGateway must contain an IPv4 address";
+      return false;
+    }
+    if (!parseConfiguredIp(next.ethernetDns, target)) {
+      error = "ethernetDns must contain an IPv4 address";
+      return false;
+    }
   }
   String host = normalizedHostname(next.hostname);
   copyText(next.hostname, sizeof(next.hostname), host.c_str());
